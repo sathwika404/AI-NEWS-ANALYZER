@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from datetime import datetime, timezone
 
 st.set_page_config(
     page_title="AI News Analyzer",
@@ -12,6 +13,44 @@ st.title("📰 AI-Powered News Sentiment & Impact Analyzer")
 st.write("Discover news and analyze its sentiment using AI.")
 
 analyzer = SentimentIntensityAnalyzer()
+def calculate_impact_score(article, sentiment_score):
+    # 1. Recency score: maximum 40 points
+    published_at = article.get("publishedAt")
+    recency_points = 8
+
+    if published_at:
+        try:
+            published_time = datetime.fromisoformat(
+                published_at.replace("Z", "+00:00")
+            )
+            age_hours = max(
+                0,
+                (datetime.now(timezone.utc) - published_time).total_seconds()
+                / 3600
+            )
+
+            if age_hours <= 6:
+                recency_points = 40
+            elif age_hours <= 24:
+                recency_points = 32
+            elif age_hours <= 72:
+                recency_points = 24
+            elif age_hours <= 168:
+                recency_points = 16
+
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Sentiment intensity: maximum 40 points
+    sentiment_points = round(abs(sentiment_score) * 40)
+
+    # 3. Source information: maximum 20 points
+    source = article.get("source") or {}
+    source_points = 20 if source.get("name") else 10
+
+    total = recency_points + sentiment_points + source_points
+
+    return min(100, total)
 
 topic = st.text_input(
     "Enter a news topic",
@@ -54,6 +93,7 @@ if st.button("Analyze News"):
                         text = f"{title}. {description}"
 
                         score = analyzer.polarity_scores(text)["compound"]
+                        impact_score = calculate_impact_score(article, score)
 
                         if score >= 0.05:
                             sentiment = "Positive 😊"
@@ -65,7 +105,8 @@ if st.button("Analyze News"):
                         results.append({
                             "article": article,
                             "sentiment": sentiment,
-                            "score": score
+                            "score": score,
+                            "impact_score": impact_score
                         })
 
                     positive = sum(
@@ -166,9 +207,23 @@ if st.button("Analyze News"):
                         },
                         use_container_width=True
                     )
-
-                    total = positive + negative + neutral
-
+                    total = positive + negative + neutral  
+                    st.subheader("⚡ Estimated News Impact Scores")
+                    impact_chart_data = {
+                        "Article": [
+                            (r["article"].get("title") or "Untitled article")[:40]
+                            for r in results
+                        ],
+                        "Impact Score": [
+                            r["impact_score"] for r in results
+                        ]
+                    }
+                    st.bar_chart(
+    impact_chart_data,
+    x="Article",
+    y="Impact Score",
+    color="#F2A541"
+)
                     st.subheader("📋 Sentiment Percentages")
 
                     if total > 0:
@@ -215,6 +270,7 @@ if st.button("Analyze News"):
                             f"**Sentiment score:** "
                             f"{result['score']:.2f}"
                         )
+                        st.metric("Estimated News Impact Score",f"{result['impact_score']}/100")
 
                         source = article.get("source", {}).get(
                             "name", "Unknown"
